@@ -1,0 +1,76 @@
+server:
+  port: 2333
+  address: 0.0.0.0
+  http2:
+    enabled: false
+
+lavalink:
+  server:
+    password: "youshallnotpass"   # Change this and match LAVALINK_PASSWORD in .env
+    sources:
+      youtube: false              # Disabled — handled by the youtube-source plugin above
+      bandcamp: true
+      soundcloud: true
+      twitch: true
+      vimeo: true
+      http: true
+      local: false
+
+    filters:
+      volume: true
+      equalizer: true
+      karaoke: true
+      timescale: true
+      tremolo: true
+      vibrato: true
+      distortion: true
+      rotation: true
+      channelMix: true
+      lowPass: true
+
+    # ── Audio quality ──────────────────────────────────────────────────────
+    bufferDurationMs: 400         # Increase to reduce underruns on slow networks (default: 400)
+    frameBufferDurationMs: 5000   # Frame buffer — raise if experiencing stuttering (default: 5000)
+    opusEncodingQuality: 10       # 0–10; 10 = best quality, higher CPU usage
+    resamplingQuality: HIGH       # LOW | MEDIUM | HIGH
+    trackStuckThresholdMs: 10000  # Mark track as stuck after 10 s of no audio frames
+
+    # ── Volume normalisation ───────────────────────────────────────────────
+    # Prevents ear-bleed from volume spikes across different sources
+    playerUpdateInterval: 5       # Push position updates to the bot every 5 s (default: 5)
+
+    # ── YouTube plugin configuration ───────────────────────────────────────
+    youtubeConfig:
+      # Set to false to avoid age-restricted blocks at the cost of some requests
+      allowSearch: true
+      allowDirectVideoIds: true
+      allowDirectPlaylistIds: true
+
+metrics:
+  prometheus:
+    enabled: false
+    endpoint: /metrics
+
+sentry:
+  dsn: ""
+
+logging:
+  file:
+    path: ./logs/
+
+  level:
+    root: INFO
+    lavalink: INFO
+
+  request:
+    enabled: true
+    includeClientInfo: true
+    includeHeaders: false
+    includeQueryString: true
+    includePayload: true
+    maxPayloadLength: 10000
+
+  logback:
+    rollingpolicy:
+      max-file-size: 1GB
+      max-history: 30

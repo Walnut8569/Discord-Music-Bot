@@ -1,16 +1,29 @@
 'use strict';
 
-const {
-  EmbedBuilder,
-  ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  StringSelectMenuBuilder,
-} = require('discord.js');
+const { MessageFlags } = require('discord.js');
+const GuildQueue = require('./GuildQueue');
+const { buildNpEmbed, buildNpComponents } = require('./ui');
+const { parseTimeToMs, formatMs, getComputedPosition } = require('./utils');
 
-const PROGRESS_BAR_LENGTH = 20;
-const AUTO_LEAVE_MS = 30_000;
-const PROGRESS_UPDATE_MS = 2_000;
+const AUTO_LEAVE_MS      = 30_000;
+const PROGRESS_UPDATE_MS = 5_000;
+
+/**
+ * Safely defer an ephemeral reply.
+ * Returns false and bails out silently if the interaction is already
+ * acknowledged (40060) or has expired (10062).
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction
+ * @returns {Promise<boolean>}
+ */
+async function safeDefer(interaction) {
+  try {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    return true;
+  } catch (err) {
+    if (err.code === 40060 || err.code === 10062) return false;
+    throw err;
+  }
+}
 
 // Button custom ID constants
 const BTN = {
@@ -23,38 +36,6 @@ const BTN = {
   SEEK_MENU:'np_seek',
 };
 
-class GuildQueue {
-  constructor(voiceChannelId, textChannelId) {
-    this.voiceChannelId = voiceChannelId;
-    this.textChannelId  = textChannelId;
-    /** @type {import('shoukaku').Player|null} */
-    this.player = null;
-    /** @type {Array<{encoded:string,info:object}>} */
-    this.tracks  = [];
-    /** @type {{encoded:string,info:object}|null} */
-    this.current = null;
-    this.playing = false;
-    this.paused  = false;
-    /** Unix timestamp (seconds) of when position 0 was — used for client-side countdown */
-    this.effectiveStartUnix  = null;
-    this.estimatedEndUnix    = null;
-    /** @type {import('discord.js').Message|null} */
-    this.npMessage = null;
-    /** @type {ReturnType<typeof setInterval>|null} */
-    this.progressInterval = null;
-    /** @type {ReturnType<typeof setTimeout>|null} */
-    this.leaveTimer = null;
-  }
-
-  clearLeaveTimer() {
-    if (this.leaveTimer) { clearTimeout(this.leaveTimer); this.leaveTimer = null; }
-  }
-
-  clearProgressInterval() {
-    if (this.progressInterval) { clearInterval(this.progressInterval); this.progressInterval = null; }
-  }
-}
-
 class MusicManager {
   /** @param {import('discord.js').Client} client */
   constructor(client) {
@@ -66,10 +47,10 @@ class MusicManager {
   // ─── Slash command handlers ────────────────────────────────────────────────
 
   async handlePlay(interaction) {
-    await interaction.deferReply({ ephemeral: true });
+    if (!await safeDefer(interaction)) return;
 
     const voiceChannel = interaction.member?.voice?.channel;
-    if (!voiceChannel) return interaction.editReply('你需要先加入語音頻道！');
+    if (!voiceChannel) return interaction.editReply('⚠ Join a voice channel first.');
 
     const query   = interaction.options.getString('url', true);
     const guildId = interaction.guildId;
@@ -79,15 +60,15 @@ class MusicManager {
         guildId, voiceChannel, interaction.channelId, interaction.guild.shardId ?? 0,
       );
 
-      const isUrl     = /^https?:\/\//i.test(query);
+      const isUrl      = /^https?:\/\//i.test(query);
       const identifier = isUrl ? query : `ytsearch:${query}`;
-      const result    = await queue.player.node.rest.resolve(identifier);
+      const result     = await queue.player.node.rest.resolve(identifier);
 
-      if (!result || result.loadType === 'empty') return interaction.editReply('找不到音樂，請確認連結或關鍵字。');
-      if (result.loadType === 'error') return interaction.editReply(`來源錯誤：${result.data?.message ?? '未知錯誤'}`);
+      if (!result || result.loadType === 'empty') return interaction.editReply('⚠ No results found.');
+      if (result.loadType === 'error') return interaction.editReply(`⚠ Source error: ${result.data?.message ?? 'unknown'}`);
 
       const { tracks, replyMsg } = this._extractTracks(result);
-      if (!tracks.length) return interaction.editReply('無法從該來源取得曲目。');
+      if (!tracks.length) return interaction.editReply('⚠ No playable tracks found.');
 
       queue.tracks.push(...tracks);
       if (!queue.playing) await this._playNext(guildId);
@@ -95,44 +76,44 @@ class MusicManager {
       await interaction.editReply(replyMsg);
     } catch (err) {
       console.error(`[MusicManager] handlePlay (guild:${guildId}):`, err);
-      await interaction.editReply('播放時發生錯誤，請稍後再試。').catch(() => {});
+      await interaction.editReply('⚠ Playback error. Please try again.').catch(() => {});
     }
   }
 
   async handleSeek(interaction) {
-    await interaction.deferReply({ ephemeral: true });
+    if (!await safeDefer(interaction)) return;
+
     const queue = this.queues.get(interaction.guildId);
-    if (!queue?.playing || !queue.current) return interaction.editReply('目前沒有在播放任何音樂。');
+    if (!queue?.playing || !queue.current) return interaction.editReply('⚠ Nothing is playing.');
 
     const positionMs = parseTimeToMs(interaction.options.getString('time', true));
-    if (positionMs === null) return interaction.editReply('格式無效，請用秒數（90）或 mm:ss（1:30）。');
-    if (positionMs > queue.current.info.length) return interaction.editReply(`超出歌曲長度（${formatMs(queue.current.info.length)}）。`);
+    if (positionMs === null) return interaction.editReply('⚠ Invalid format. Use seconds (90) or mm:ss (1:30).');
+    if (positionMs > queue.current.info.length) return interaction.editReply(`⚠ Exceeds track length (${formatMs(queue.current.info.length)}).`);
 
     await queue.player.seekTo(positionMs);
     this._updateTimestamps(queue, positionMs);
-    await interaction.editReply(`已跳至 **${formatMs(positionMs)}**`);
+    await interaction.editReply(`⏩ Seeked to **${formatMs(positionMs)}**`);
   }
 
   async handleNowPlaying(interaction) {
-    await interaction.deferReply({ ephemeral: true });
+    if (!await safeDefer(interaction)) return;
+
     const queue = this.queues.get(interaction.guildId);
-    if (!queue?.playing || !queue.current) return interaction.editReply('目前沒有在播放任何音樂。');
-    await interaction.editReply('已在頻道中顯示播放進度 👇');
+    if (!queue?.playing || !queue.current) return interaction.editReply('⚠ Nothing is playing.');
+    await interaction.editReply('▶ Now playing ↓');
   }
 
-  // ─── Button & Select Menu handlers (called from index.js) ─────────────────
+  // ─── Button & Select Menu handlers ────────────────────────────────────────
 
   async handleButton(interaction) {
     const guildId = interaction.guildId;
     const queue   = this.queues.get(guildId);
 
     if (!queue?.current) {
-      return interaction.reply({ content: '目前沒有在播放任何音樂。', ephemeral: true });
+      return interaction.reply({ content: '⚠ Nothing is playing.', flags: MessageFlags.Ephemeral });
     }
-
-    // Only allow users in the same voice channel
     if (interaction.member?.voice?.channelId !== queue.voiceChannelId) {
-      return interaction.reply({ content: '你需要在同一個語音頻道才能操作。', ephemeral: true });
+      return interaction.reply({ content: '⚠ Join the same voice channel first.', flags: MessageFlags.Ephemeral });
     }
 
     await interaction.deferUpdate();
@@ -144,23 +125,31 @@ class MusicManager {
         break;
       }
       case BTN.BACK: {
-        const newPos = Math.max(0, queue.player.position - 30_000);
+        const newPos = Math.max(0, getComputedPosition(queue) - 10_000);
         await queue.player.seekTo(newPos);
         this._updateTimestamps(queue, newPos);
         break;
       }
-      case BTN.PAUSE:
+      case BTN.PAUSE: {
         queue.paused = !queue.paused;
         await queue.player.setPaused(queue.paused);
+        if (queue.paused) {
+          queue.pausedPositionMs = getComputedPosition(queue);
+          queue.estimatedEndUnix = null;
+          this._stopProgressUpdater(guildId);
+        } else {
+          this._updateTimestamps(queue, queue.pausedPositionMs ?? 0);
+          queue.pausedPositionMs = null;
+          this._startProgressUpdater(guildId);
+        }
         break;
-
+      }
       case BTN.FORWARD: {
-        const newPos = Math.min(queue.current.info.length, queue.player.position + 30_000);
+        const newPos = Math.min(queue.current.info.length, getComputedPosition(queue) + 10_000);
         await queue.player.seekTo(newPos);
         this._updateTimestamps(queue, newPos);
         break;
       }
-
       case BTN.SKIP:
         await queue.player.stopTrack();
         break;
@@ -169,27 +158,9 @@ class MusicManager {
         queue.tracks = [];
         await queue.player.stopTrack();
         break;
+
     }
 
-    // Force-refresh the now-playing message immediately
-    await this._refreshNowPlaying(guildId);
-  }
-
-  async handleSelectMenu(interaction) {
-    const guildId = interaction.guildId;
-    const queue   = this.queues.get(guildId);
-
-    if (!queue?.current) {
-      return interaction.reply({ content: '目前沒有在播放任何音樂。', ephemeral: true });
-    }
-    if (interaction.member?.voice?.channelId !== queue.voiceChannelId) {
-      return interaction.reply({ content: '你需要在同一個語音頻道才能操作。', ephemeral: true });
-    }
-
-    await interaction.deferUpdate();
-    const posMs = parseInt(interaction.values[0], 10);
-    await queue.player.seekTo(posMs);
-    this._updateTimestamps(queue, posMs);
     await this._refreshNowPlaying(guildId);
   }
 
@@ -198,7 +169,7 @@ class MusicManager {
   async cleanup(nodeName) {
     for (const [guildId, queue] of this.queues.entries()) {
       if (queue.player?.node?.name === nodeName) {
-        await this._sendToText(guildId, `Lavalink 節點 **${nodeName}** 斷線，播放已停止。`);
+        await this._sendToText(guildId, `⚠ Lavalink node **${nodeName}** disconnected. Playback stopped.`);
         this._stopProgressUpdater(guildId);
         this.queues.delete(guildId);
       }
@@ -228,6 +199,7 @@ class MusicManager {
       if (!queue) return;
       queue.playing = true;
       queue.paused  = false;
+      queue.pausedPositionMs = null;
       this._updateTimestamps(queue, 0);
       this._startProgressUpdater(guildId);
     });
@@ -241,13 +213,13 @@ class MusicManager {
     player.on('exception', (data) => {
       console.error(`[MusicManager] exception (guild:${guildId}):`, data);
       this._stopProgressUpdater(guildId);
-      this._sendToText(guildId, `播放錯誤：${data?.exception?.message ?? '未知'}，跳至下一首。`);
+      this._sendToText(guildId, `⚠ Playback error: ${data?.exception?.message ?? 'unknown'}. Skipping.`);
       this._playNext(guildId);
     });
 
     player.on('stuck', () => {
       this._stopProgressUpdater(guildId);
-      this._sendToText(guildId, '播放卡住了，跳至下一首。');
+      this._sendToText(guildId, '⚠ Playback stuck. Skipping.');
       this._playNext(guildId);
     });
 
@@ -265,9 +237,8 @@ class MusicManager {
       queue.playing = false;
       queue.current = null;
       this._stopProgressUpdater(guildId);
-      // Mark old NP message as ended
       await this._updateNpMessage(guildId, { ended: true });
-      this._sendToText(guildId, `隊列結束，${AUTO_LEAVE_MS / 1000} 秒後自動離開。`);
+      this._sendToText(guildId, `⏹ Queue ended. Leaving in ${AUTO_LEAVE_MS / 1000}s.`);
       queue.leaveTimer = setTimeout(() => this._destroyQueue(guildId), AUTO_LEAVE_MS);
       return;
     }
@@ -281,7 +252,7 @@ class MusicManager {
       await queue.player.playTrack({ track: { encoded: track.encoded } });
     } catch (err) {
       console.error(`[MusicManager] playTrack failed (guild:${guildId}):`, err);
-      this._sendToText(guildId, '播放失敗，跳至下一首。');
+      this._sendToText(guildId, '⚠ Failed to play track. Skipping.');
       queue.current = null;
       this._playNext(guildId);
     }
@@ -294,8 +265,6 @@ class MusicManager {
     if (!queue) return;
 
     queue.clearProgressInterval();
-
-    // Send initial now-playing message (replaces old one)
     this._sendFreshNowPlaying(guildId);
 
     queue.progressInterval = setInterval(
@@ -309,12 +278,10 @@ class MusicManager {
     if (queue) queue.clearProgressInterval();
   }
 
-  /** Send a brand-new now-playing message (called when a new track starts). */
   async _sendFreshNowPlaying(guildId) {
     const queue = this.queues.get(guildId);
     if (!queue?.current) return;
 
-    // Delete old message if it still exists
     if (queue.npMessage) {
       queue.npMessage.delete().catch(() => {});
       queue.npMessage = null;
@@ -325,8 +292,8 @@ class MusicManager {
       if (!channel?.isTextBased()) return;
 
       const msg = await channel.send({
-        embeds: [this._buildNpEmbed(queue)],
-        components: this._buildNpComponents(queue),
+        embeds:     [buildNpEmbed(queue)],
+        components: buildNpComponents(queue),
       });
       queue.npMessage = msg;
     } catch (err) {
@@ -334,32 +301,30 @@ class MusicManager {
     }
   }
 
-  /** Edit the existing now-playing message in place. */
   async _refreshNowPlaying(guildId) {
     const queue = this.queues.get(guildId);
     if (!queue?.npMessage) return;
 
     try {
       await queue.npMessage.edit({
-        embeds: [this._buildNpEmbed(queue)],
-        components: this._buildNpComponents(queue),
+        embeds:     [buildNpEmbed(queue)],
+        components: buildNpComponents(queue),
       });
     } catch (err) {
-      // Message was deleted — clear reference so we don't keep failing
       queue.npMessage = null;
       console.warn(`[MusicManager] refreshNowPlaying (guild:${guildId}):`, err.message);
     }
   }
 
-  /** Update only the embed content (e.g. when track ends). */
   async _updateNpMessage(guildId, { ended = false } = {}) {
     const queue = this.queues.get(guildId);
     if (!queue?.npMessage) return;
 
     try {
+      const { EmbedBuilder } = require('discord.js');
       const embed = ended
-        ? new EmbedBuilder().setTitle('播放結束').setColor(0x808080)
-        : this._buildNpEmbed(queue);
+        ? new EmbedBuilder().setTitle('⏹').setColor(0x808080)
+        : buildNpEmbed(queue);
 
       await queue.npMessage.edit({ embeds: [embed], components: [] });
       queue.npMessage = null;
@@ -368,91 +333,12 @@ class MusicManager {
     }
   }
 
-  // ─── Timestamp helpers (client-side auto-update) ──────────────────────────
+  // ─── Timestamp helpers ─────────────────────────────────────────────────────
 
-  /**
-   * Recalculate the Discord Unix timestamps used for client-side countdown.
-   * Call this whenever playback position changes (start, seek).
-   * @param {GuildQueue} queue
-   * @param {number} positionMs  Current playback position in ms
-   */
   _updateTimestamps(queue, positionMs) {
     const duration = queue.current?.info?.length ?? 0;
-    // Wall-clock second when position 0 was
     queue.effectiveStartUnix = Math.floor((Date.now() - positionMs) / 1000);
-    // Wall-clock second when the track will end (at current playback speed)
     queue.estimatedEndUnix   = queue.effectiveStartUnix + Math.floor(duration / 1000);
-  }
-
-  // ─── Embed & component builders ───────────────────────────────────────────
-
-  _buildNpEmbed(queue) {
-    const { info } = queue.current;
-    const position = queue.player.position;
-    const duration = info.length;
-
-    // <t:unix:R> is rendered and auto-updated every second on the Discord client
-    // side — no API call needed. This gives the "live countdown" effect.
-    const countdown = queue.estimatedEndUnix
-      ? `<t:${queue.estimatedEndUnix}:R> 結束`
-      : formatMs(duration - position);
-
-    return new EmbedBuilder()
-      .setTitle(queue.paused ? '⏸ 已暫停' : '▶ 正在播放')
-      .setDescription(`**[${info.title}](${info.uri})**`)
-      .addFields(
-        { name: '作者',            value: info.author || '未知',      inline: true },
-        { name: '總長',            value: formatMs(duration),         inline: true },
-        { name: '⏱ 剩餘（即時）', value: countdown,                  inline: true },
-        { name: '待播',            value: `${queue.tracks.length} 首`, inline: true },
-        { name: '進度（每 2 秒）', value: buildProgressBar(position, duration) },
-      )
-      .setColor(queue.paused ? 0xffa500 : 0x1db954);
-  }
-
-  _buildNpComponents(queue) {
-    const isStream = queue.current?.info?.isStream ?? false;
-
-    // Row 1: control buttons
-    const controlRow = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(BTN.RESTART)
-        .setLabel('⏮')
-        .setStyle(ButtonStyle.Secondary)
-        .setDisabled(isStream),
-      new ButtonBuilder()
-        .setCustomId(BTN.BACK)
-        .setLabel('⏪ -30s')
-        .setStyle(ButtonStyle.Secondary)
-        .setDisabled(isStream),
-      new ButtonBuilder()
-        .setCustomId(BTN.PAUSE)
-        .setLabel(queue.paused ? '▶ 繼續' : '⏸ 暫停')
-        .setStyle(queue.paused ? ButtonStyle.Success : ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId(BTN.FORWARD)
-        .setLabel('+30s ⏩')
-        .setStyle(ButtonStyle.Secondary)
-        .setDisabled(isStream),
-      new ButtonBuilder()
-        .setCustomId(BTN.SKIP)
-        .setLabel('⏭ 跳過')
-        .setStyle(ButtonStyle.Danger),
-    );
-
-    // Row 2: seek select menu (disabled for live streams)
-    const duration = queue.current?.info?.length ?? 0;
-    const options  = buildSeekOptions(queue.player.position, duration);
-
-    const seekRow = new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId(BTN.SEEK_MENU)
-        .setPlaceholder(isStream ? '直播無法跳轉' : '🎯 拖拉到指定時間點...')
-        .setDisabled(isStream)
-        .addOptions(options),
-    );
-
-    return [controlRow, seekRow];
   }
 
   // ─── Misc helpers ──────────────────────────────────────────────────────────
@@ -487,65 +373,15 @@ class MusicManager {
   _extractTracks(result) {
     switch (result.loadType) {
       case 'track':
-        return { tracks: [result.data], replyMsg: `已加入隊列：**${result.data.info.title}**` };
+        return { tracks: [result.data], replyMsg: `♫ Queued: **${result.data.info.title}**` };
       case 'playlist':
-        return { tracks: result.data.tracks, replyMsg: `已加入播放清單：**${result.data.info.name}**（${result.data.tracks.length} 首）` };
+        return { tracks: result.data.tracks, replyMsg: `♫ Playlist: **${result.data.info.name}** (${result.data.tracks.length} tracks)` };
       case 'search':
-        return { tracks: [result.data[0]], replyMsg: `已加入隊列：**${result.data[0].info.title}**` };
+        return { tracks: [result.data[0]], replyMsg: `♫ Queued: **${result.data[0].info.title}**` };
       default:
         return { tracks: [], replyMsg: '' };
     }
   }
-}
-
-// ─── Pure utilities ────────────────────────────────────────────────────────
-
-function parseTimeToMs(str) {
-  str = str.trim();
-  if (/^\d+$/.test(str)) return parseInt(str, 10) * 1000;
-  const m = str.match(/^(\d+):(\d{2})$/);
-  if (m) return (parseInt(m[1], 10) * 60 + parseInt(m[2], 10)) * 1000;
-  return null;
-}
-
-function formatMs(ms) {
-  const total = Math.floor(ms / 1000);
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m}:${s.toString().padStart(2, '0')}`;
-}
-
-function buildProgressBar(position, duration, length = PROGRESS_BAR_LENGTH) {
-  const ratio  = duration > 0 ? Math.min(position / duration, 1) : 0;
-  const filled = Math.round(ratio * length);
-  return `${'▬'.repeat(filled)}🔘${'▬'.repeat(length - filled)}\n\`${formatMs(position)} / ${formatMs(duration)}\``;
-}
-
-/**
- * Generate select menu options for seeking.
- * Produces up to 23 evenly-spaced timestamps covering the full duration,
- * with the current position marked as default.
- */
-function buildSeekOptions(position, duration) {
-  if (duration <= 0) {
-    return [{ label: '0:00', value: '0', default: true }];
-  }
-
-  const COUNT = 23; // max 25 options; leave 2 for safety
-  const step  = duration / COUNT;
-  let closestIdx = 0;
-  let closestDiff = Infinity;
-
-  const options = Array.from({ length: COUNT }, (_, i) => {
-    const posMs = Math.round(i * step);
-    const pct   = Math.round((i / (COUNT - 1)) * 100);
-    const diff  = Math.abs(posMs - position);
-    if (diff < closestDiff) { closestDiff = diff; closestIdx = i; }
-    return { label: `${formatMs(posMs)}  (${pct}%)`, value: String(posMs), default: false };
-  });
-
-  options[closestIdx].default = true;
-  return options;
 }
 
 module.exports = MusicManager;

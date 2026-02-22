@@ -5,6 +5,7 @@ require('dotenv').config();
 const {
   Client,
   GatewayIntentBits,
+  MessageFlags,
   REST,
   Routes,
   SlashCommandBuilder,
@@ -148,10 +149,11 @@ client.on('interactionCreate', async (interaction) => {
       }
     } else if (interaction.isButton()) {
       await client.music.handleButton(interaction);
-    } else if (interaction.isStringSelectMenu()) {
-      await client.music.handleSelectMenu(interaction);
     }
   } catch (err) {
+    // 10062: interaction expired before the bot could respond (expected on restart / network lag)
+    // 40060: interaction already acknowledged by a concurrent handler
+    if (err.code === 10062 || err.code === 40060) return;
     console.error('[Discord] Interaction error:', err);
   }
 });

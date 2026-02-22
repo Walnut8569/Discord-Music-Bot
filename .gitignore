@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Lavalink binaries (large files, download separately)
+*.jar
+
 # Environment variables — NEVER commit these
 .env
 
