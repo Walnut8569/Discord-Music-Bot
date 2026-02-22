@@ -1,0 +1,17 @@
+{
+  "name": "discord-music-bot",
+  "version": "1.0.0",
+  "description": "High-performance Discord music bot using discord.js v14 + Shoukaku + Lavalink",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.5",
+    "shoukaku": "^4.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
