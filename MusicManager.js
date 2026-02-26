@@ -3,7 +3,7 @@
 const { MessageFlags } = require('discord.js');
 const GuildQueue = require('./GuildQueue');
 const { buildNpEmbed, buildNpComponents } = require('./ui');
-const { parseTimeToMs, formatMs, getComputedPosition } = require('./utils');
+const { getComputedPosition } = require('./utils');
 
 const AUTO_LEAVE_MS      = 30_000;
 const PROGRESS_UPDATE_MS = 5_000;
@@ -77,30 +77,6 @@ class MusicManager {
       console.error(`[MusicManager] handlePlay (guild:${guildId}):`, err);
       await interaction.editReply('Playback error. Please try again.').catch(() => {});
     }
-  }
-
-  async handleSeek(interaction) {
-    if (!await safeDefer(interaction)) return;
-
-    const queue = this.queues.get(interaction.guildId);
-    if (!queue?.playing || !queue.current) return interaction.editReply('Nothing is playing.');
-
-    const positionMs = parseTimeToMs(interaction.options.getString('time', true));
-    if (positionMs === null) return interaction.editReply('Invalid format. Use seconds (90) or mm:ss (1:30).');
-    if (positionMs > queue.current.info.length) return interaction.editReply(`Exceeds track length (${formatMs(queue.current.info.length)}).`);
-
-    await queue.player.seekTo(positionMs);
-    this._updateTimestamps(queue, positionMs);
-    await interaction.editReply(`Seeked to **${formatMs(positionMs)}**`);
-  }
-
-  async handleNowPlaying(interaction) {
-    if (!await safeDefer(interaction)) return;
-
-    const queue = this.queues.get(interaction.guildId);
-    if (!queue?.playing || !queue.current) return interaction.editReply('Nothing is playing.');
-    await this._sendFreshNowPlaying(interaction.guildId);
-    await interaction.editReply({ content: '↑ Now playing message refreshed.' });
   }
 
   // ─── Button & Select Menu handlers ────────────────────────────────────────

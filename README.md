@@ -1,65 +1,78 @@
 # Discord Music Bot
 
-高效能 Discord 音樂機器人，基於 **discord.js v14** + **Shoukaku** + **Lavalink** 建構。
+discord.js v14 + Shoukaku + Lavalink 寫的音樂 bot。
 
-## 功能
+## 使用
 
-- `/play <URL 或關鍵字>` — 播放 YouTube 音樂或關鍵字搜尋
-- `/seek <時間>` — 跳至指定時間點（支援秒數如 `90`，或 `mm:ss` 格式如 `1:30`）
-- `/nowplaying` — 顯示目前播放進度
-- 播放控制按鈕：重播、後退 30 秒、暫停/繼續、前進 30 秒、跳過、停止
-- 拖拉跳轉選單（最多 23 個時間點）
-- 進度條每 2 秒自動更新，剩餘時間透過 Discord 時間戳即時倒數
-- 隊列播完後 30 秒自動離開語音頻道
+```
+/play <YouTube URL 或關鍵字>
+```
 
-## 前置需求
+播放中會有一則 Now Playing 訊息，上面有進度條和控制按鈕（重播、後退 10 秒、暫停、前進 10 秒、跳過）。有待播清單的話會附上選單可以直接跳播。隊列空了之後 30 秒自動離開。
 
-- **Node.js** >= 18
-- **Lavalink** 伺服器（含 [youtube-source](https://github.com/lavalink-devtools/youtube-source) 插件）
+## 跑起來
 
-## 安裝
+需要先有 Java 21 和一個跑著的 Lavalink。
 
 ```bash
+# 啟動 Lavalink（需先把 Lavalink.jar 和 youtube-source 插件放進 lavalink/）
+./lavalink/start.sh
+
+# 安裝依賴
 npm install
-```
 
-建立 `.env` 檔案：
+# 複製 .env 並填入設定
+cp .env.example .env
 
-```env
-DISCORD_TOKEN=你的_Bot_Token
-GUILD_ID=你的_伺服器_ID          # 省略此行則註冊為全域指令（更新需等最多 1 小時）
-LAVALINK_HOST=localhost
-LAVALINK_PORT=2333
-LAVALINK_PASSWORD=youshallnotpass
-LAVALINK_SECURE=false             # 若 Lavalink 使用 HTTPS/WSS 則設為 true
-```
-
-## Lavalink 設定
-
-專案內附 `application.yml` 可直接用於啟動 Lavalink。
-
-啟動前請先下載 [youtube-source 插件](https://github.com/lavalink-devtools/youtube-source/releases)，放至 Lavalink 的 `plugins/` 資料夾。
-
-```bash
-java -jar Lavalink.jar
-```
-
-> 若要修改密碼，請同步更新 `application.yml` 中的 `password` 與 `.env` 中的 `LAVALINK_PASSWORD`。
-
-## 啟動
-
-```bash
+# 啟動 bot
 npm start
 ```
 
-## 技術架構
+`.env` 裡需要填的東西：
 
-| 元件 | 用途 |
-|------|------|
-| [discord.js v14](https://discord.js.org/) | Discord API 互動 |
-| [Shoukaku](https://github.com/shipgirlproject/Shoukaku) | Lavalink WebSocket 客戶端 |
-| [Lavalink](https://github.com/lavalink-devtools/lavalink) | 音訊串流引擎 |
+```env
+DISCORD_TOKEN=
+GUILD_ID=              # 填了是伺服器指令（即時生效），不填是全域指令（最慢 1 小時）
+LAVALINK_HOST=localhost
+LAVALINK_PORT=2333
+LAVALINK_PASSWORD=youshallnotpass
+LAVALINK_SECURE=false
+```
 
-## 支援音源
+密碼要跟 `application.yml` 裡的 `password` 一致。
 
-YouTube（透過 youtube-source 插件）、SoundCloud、Bandcamp、Twitch、Vimeo、HTTP 直連
+## Lavalink 設定（application.yml）
+
+Lavalink 的設定檔已包含在 `application.yml`，主要項目：
+
+| 項目 | 預設值 | 說明 |
+|---|---|---|
+| `server.port` | `2333` | 監聽埠，需與 `LAVALINK_PORT` 一致 |
+| `server.address` | `0.0.0.0` | 監聽位址 |
+| `lavalink.server.password` | `youshallnotpass` | 需與 `LAVALINK_PASSWORD` 一致 |
+| `lavalink.server.sources.youtube` | `false` | 由 youtube-source 插件接管，保持 false |
+| `opusEncodingQuality` | `10` | 音質（0–10），越高 CPU 用量越大 |
+| `resamplingQuality` | `HIGH` | 重採樣品質（LOW / MEDIUM / HIGH） |
+| `bufferDurationMs` | `400` | 緩衝時間，網路較差可調高 |
+| `frameBufferDurationMs` | `5000` | 幀緩衝，出現卡頓可調高 |
+
+### YouTube 插件
+
+youtube-source 插件需手動下載放進 `lavalink/plugins/`：
+
+```
+https://github.com/lavalink-devtools/youtube-source/releases
+```
+
+下載 `youtube-plugin-x.x.x.jar` 放入後重啟 Lavalink 即可。插件版本在 `application.yml` 的 `lavalink.plugins` 區段設定，目前使用 `1.17.0`。
+
+## 檔案結構
+
+```
+index.js          # 入口，Discord client + Shoukaku 初始化、指令路由
+MusicManager.js   # 播放邏輯、隊列管理
+GuildQueue.js     # 每個伺服器的播放狀態
+ui.js             # Now Playing embed 和按鈕
+utils.js          # 進度條、時間格式化
+application.yml   # Lavalink 設定
+```

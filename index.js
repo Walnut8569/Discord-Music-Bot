@@ -102,19 +102,6 @@ const commandDefs = [
         .setRequired(true),
     ),
 
-  new SlashCommandBuilder()
-    .setName('seek')
-    .setDescription('跳至指定時間點')
-    .addStringOption((opt) =>
-      opt
-        .setName('time')
-        .setDescription('秒數（如 90）或 mm:ss（如 1:30）')
-        .setRequired(true),
-    ),
-
-  new SlashCommandBuilder()
-    .setName('nowplaying')
-    .setDescription('顯示目前播放進度'),
 ].map((cmd) => cmd.toJSON());
 
 // ─── Register commands on ready ────────────────────────────────────────────
@@ -143,9 +130,7 @@ client.on('interactionCreate', async (interaction) => {
   try {
     if (interaction.isChatInputCommand()) {
       switch (interaction.commandName) {
-        case 'play':       await client.music.handlePlay(interaction);       break;
-        case 'seek':       await client.music.handleSeek(interaction);       break;
-        case 'nowplaying': await client.music.handleNowPlaying(interaction); break;
+        case 'play': await client.music.handlePlay(interaction); break;
       }
     } else if (interaction.isButton()) {
       await client.music.handleButton(interaction);
