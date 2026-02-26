@@ -27,13 +27,11 @@ async function safeDefer(interaction) {
 
 // Button custom ID constants
 const BTN = {
-  RESTART:  'np_restart',
-  BACK:     'np_back',
-  PAUSE:    'np_pause',
-  FORWARD:  'np_forward',
-  SKIP:     'np_skip',
-  STOP:     'np_stop',
-  SEEK_MENU:'np_seek',
+  RESTART: 'np_restart',
+  BACK:    'np_back',
+  PAUSE:   'np_pause',
+  FORWARD: 'np_forward',
+  SKIP:    'np_skip',
 };
 
 class MusicManager {
@@ -50,7 +48,7 @@ class MusicManager {
     if (!await safeDefer(interaction)) return;
 
     const voiceChannel = interaction.member?.voice?.channel;
-    if (!voiceChannel) return interaction.editReply('⚠ Join a voice channel first.');
+    if (!voiceChannel) return interaction.editReply('Join a voice channel first.');
 
     const query   = interaction.options.getString('url', true);
     const guildId = interaction.guildId;
@@ -64,19 +62,20 @@ class MusicManager {
       const identifier = isUrl ? query : `ytsearch:${query}`;
       const result     = await queue.player.node.rest.resolve(identifier);
 
-      if (!result || result.loadType === 'empty') return interaction.editReply('⚠ No results found.');
-      if (result.loadType === 'error') return interaction.editReply(`⚠ Source error: ${result.data?.message ?? 'unknown'}`);
+      if (!result || result.loadType === 'empty') return interaction.editReply('No results found.');
+      if (result.loadType === 'error') return interaction.editReply(`Source error: ${result.data?.message ?? 'unknown'}`);
 
       const { tracks, replyMsg } = this._extractTracks(result);
-      if (!tracks.length) return interaction.editReply('⚠ No playable tracks found.');
+      if (!tracks.length) return interaction.editReply('No playable tracks found.');
 
+      for (const track of tracks) track.requester = interaction.user;
       queue.tracks.push(...tracks);
       if (!queue.playing) await this._playNext(guildId);
 
       await interaction.editReply(replyMsg);
     } catch (err) {
       console.error(`[MusicManager] handlePlay (guild:${guildId}):`, err);
-      await interaction.editReply('⚠ Playback error. Please try again.').catch(() => {});
+      await interaction.editReply('Playback error. Please try again.').catch(() => {});
     }
   }
 
@@ -84,23 +83,24 @@ class MusicManager {
     if (!await safeDefer(interaction)) return;
 
     const queue = this.queues.get(interaction.guildId);
-    if (!queue?.playing || !queue.current) return interaction.editReply('⚠ Nothing is playing.');
+    if (!queue?.playing || !queue.current) return interaction.editReply('Nothing is playing.');
 
     const positionMs = parseTimeToMs(interaction.options.getString('time', true));
-    if (positionMs === null) return interaction.editReply('⚠ Invalid format. Use seconds (90) or mm:ss (1:30).');
-    if (positionMs > queue.current.info.length) return interaction.editReply(`⚠ Exceeds track length (${formatMs(queue.current.info.length)}).`);
+    if (positionMs === null) return interaction.editReply('Invalid format. Use seconds (90) or mm:ss (1:30).');
+    if (positionMs > queue.current.info.length) return interaction.editReply(`Exceeds track length (${formatMs(queue.current.info.length)}).`);
 
     await queue.player.seekTo(positionMs);
     this._updateTimestamps(queue, positionMs);
-    await interaction.editReply(`⏩ Seeked to **${formatMs(positionMs)}**`);
+    await interaction.editReply(`Seeked to **${formatMs(positionMs)}**`);
   }
 
   async handleNowPlaying(interaction) {
     if (!await safeDefer(interaction)) return;
 
     const queue = this.queues.get(interaction.guildId);
-    if (!queue?.playing || !queue.current) return interaction.editReply('⚠ Nothing is playing.');
-    await interaction.editReply('▶ Now playing ↓');
+    if (!queue?.playing || !queue.current) return interaction.editReply('Nothing is playing.');
+    await this._sendFreshNowPlaying(interaction.guildId);
+    await interaction.editReply({ content: '↑ Now playing message refreshed.' });
   }
 
   // ─── Button & Select Menu handlers ────────────────────────────────────────
@@ -110,10 +110,10 @@ class MusicManager {
     const queue   = this.queues.get(guildId);
 
     if (!queue?.current) {
-      return interaction.reply({ content: '⚠ Nothing is playing.', flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: 'Nothing is playing.', flags: MessageFlags.Ephemeral });
     }
     if (interaction.member?.voice?.channelId !== queue.voiceChannelId) {
-      return interaction.reply({ content: '⚠ Join the same voice channel first.', flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: 'Join the same voice channel first.', flags: MessageFlags.Ephemeral });
     }
 
     await interaction.deferUpdate();
@@ -154,14 +154,33 @@ class MusicManager {
         await queue.player.stopTrack();
         break;
 
-      case BTN.STOP:
-        queue.tracks = [];
-        await queue.player.stopTrack();
-        break;
-
     }
 
     await this._refreshNowPlaying(guildId);
+  }
+
+  async handleSelectMenu(interaction) {
+    if (interaction.customId !== 'np_queue_select') return;
+
+    const guildId = interaction.guildId;
+    const queue   = this.queues.get(guildId);
+
+    if (!queue?.current) {
+      return interaction.reply({ content: 'Nothing is playing.', flags: MessageFlags.Ephemeral });
+    }
+    if (interaction.member?.voice?.channelId !== queue.voiceChannelId) {
+      return interaction.reply({ content: 'Join the same voice channel first.', flags: MessageFlags.Ephemeral });
+    }
+
+    await interaction.deferUpdate();
+
+    const idx = parseInt(interaction.values[0], 10);
+    if (isNaN(idx) || idx < 0 || idx >= queue.tracks.length) return;
+
+    // Move selected track to front of queue, then skip current
+    const [track] = queue.tracks.splice(idx, 1);
+    queue.tracks.unshift(track);
+    await queue.player.stopTrack();
   }
 
   // ─── Lavalink node cleanup ─────────────────────────────────────────────────
@@ -169,7 +188,7 @@ class MusicManager {
   async cleanup(nodeName) {
     for (const [guildId, queue] of this.queues.entries()) {
       if (queue.player?.node?.name === nodeName) {
-        await this._sendToText(guildId, `⚠ Lavalink node **${nodeName}** disconnected. Playback stopped.`);
+        await this._sendToText(guildId, `Lavalink node **${nodeName}** disconnected. Playback stopped.`);
         this._stopProgressUpdater(guildId);
         this.queues.delete(guildId);
       }
@@ -213,13 +232,13 @@ class MusicManager {
     player.on('exception', (data) => {
       console.error(`[MusicManager] exception (guild:${guildId}):`, data);
       this._stopProgressUpdater(guildId);
-      this._sendToText(guildId, `⚠ Playback error: ${data?.exception?.message ?? 'unknown'}. Skipping.`);
+      this._sendToText(guildId, `Playback error: ${data?.exception?.message ?? 'unknown'}. Skipping.`);
       this._playNext(guildId);
     });
 
     player.on('stuck', () => {
       this._stopProgressUpdater(guildId);
-      this._sendToText(guildId, '⚠ Playback stuck. Skipping.');
+      this._sendToText(guildId, 'Playback stuck. Skipping.');
       this._playNext(guildId);
     });
 
@@ -237,8 +256,10 @@ class MusicManager {
       queue.playing = false;
       queue.current = null;
       this._stopProgressUpdater(guildId);
-      await this._updateNpMessage(guildId, { ended: true });
-      this._sendToText(guildId, `⏹ Queue ended. Leaving in ${AUTO_LEAVE_MS / 1000}s.`);
+      if (queue.npMessage) {
+        queue.npMessage.delete().catch(() => {});
+        queue.npMessage = null;
+      }
       queue.leaveTimer = setTimeout(() => this._destroyQueue(guildId), AUTO_LEAVE_MS);
       return;
     }
@@ -252,7 +273,7 @@ class MusicManager {
       await queue.player.playTrack({ track: { encoded: track.encoded } });
     } catch (err) {
       console.error(`[MusicManager] playTrack failed (guild:${guildId}):`, err);
-      this._sendToText(guildId, '⚠ Failed to play track. Skipping.');
+      this._sendToText(guildId, 'Failed to play track. Skipping.');
       queue.current = null;
       this._playNext(guildId);
     }
@@ -288,7 +309,7 @@ class MusicManager {
     }
 
     try {
-      const channel = await this.client.channels.fetch(queue.textChannelId);
+      const channel = await this._fetchChannel(queue.textChannelId);
       if (!channel?.isTextBased()) return;
 
       const msg = await channel.send({
@@ -316,23 +337,6 @@ class MusicManager {
     }
   }
 
-  async _updateNpMessage(guildId, { ended = false } = {}) {
-    const queue = this.queues.get(guildId);
-    if (!queue?.npMessage) return;
-
-    try {
-      const { EmbedBuilder } = require('discord.js');
-      const embed = ended
-        ? new EmbedBuilder().setTitle('⏹').setColor(0x808080)
-        : buildNpEmbed(queue);
-
-      await queue.npMessage.edit({ embeds: [embed], components: [] });
-      queue.npMessage = null;
-    } catch {
-      queue.npMessage = null;
-    }
-  }
-
   // ─── Timestamp helpers ─────────────────────────────────────────────────────
 
   _updateTimestamps(queue, positionMs) {
@@ -349,7 +353,10 @@ class MusicManager {
 
     queue.clearLeaveTimer();
     queue.clearProgressInterval();
-    await this._updateNpMessage(guildId, { ended: true });
+    if (queue.npMessage) {
+      queue.npMessage.delete().catch(() => {});
+      queue.npMessage = null;
+    }
     this.queues.delete(guildId);
 
     try {
@@ -363,21 +370,27 @@ class MusicManager {
     const queue = this.queues.get(guildId);
     if (!queue?.textChannelId) return;
     try {
-      const ch = await this.client.channels.fetch(queue.textChannelId);
+      const ch = await this._fetchChannel(queue.textChannelId);
       if (ch?.isTextBased()) await ch.send(message);
     } catch (err) {
       console.warn(`[MusicManager] sendToText (guild:${guildId}):`, err.message);
     }
   }
 
+  /** Cache-first channel lookup — avoids an HTTP round-trip for cached channels. */
+  _fetchChannel(channelId) {
+    return this.client.channels.cache.get(channelId)
+      ?? this.client.channels.fetch(channelId);
+  }
+
   _extractTracks(result) {
     switch (result.loadType) {
       case 'track':
-        return { tracks: [result.data], replyMsg: `♫ Queued: **${result.data.info.title}**` };
+        return { tracks: [result.data], replyMsg: `Queued: **${result.data.info.title}**` };
       case 'playlist':
-        return { tracks: result.data.tracks, replyMsg: `♫ Playlist: **${result.data.info.name}** (${result.data.tracks.length} tracks)` };
+        return { tracks: result.data.tracks, replyMsg: `Playlist: **${result.data.info.name}** (${result.data.tracks.length} tracks)` };
       case 'search':
-        return { tracks: [result.data[0]], replyMsg: `♫ Queued: **${result.data[0].info.title}**` };
+        return { tracks: [result.data[0]], replyMsg: `Queued: **${result.data[0].info.title}**` };
       default:
         return { tracks: [], replyMsg: '' };
     }

@@ -43,34 +43,6 @@ function buildProgressBar(position, duration, length = PROGRESS_BAR_LENGTH) {
   return `\`${formatMs(position)}\` ${bar} \`${formatMs(duration)}\``;
 }
 
-/**
- * Generate select menu options for seeking (up to 23 evenly-spaced timestamps).
- * The option closest to `position` is marked as default.
- * @param {number} position  Current position in ms
- * @param {number} duration  Total duration in ms
- * @returns {Array<{label:string, value:string, default:boolean}>}
- */
-function buildSeekOptions(position, duration) {
-  if (duration <= 0) {
-    return [{ label: '0:00', value: '0', default: true }];
-  }
-
-  const COUNT = 23;
-  const step  = duration / COUNT;
-  let closestIdx  = 0;
-  let closestDiff = Infinity;
-
-  const options = Array.from({ length: COUNT }, (_, i) => {
-    const posMs = Math.round(i * step);
-    const pct   = Math.round((i / (COUNT - 1)) * 100);
-    const diff  = Math.abs(posMs - position);
-    if (diff < closestDiff) { closestDiff = diff; closestIdx = i; }
-    return { label: `${formatMs(posMs)}  (${pct}%)`, value: String(posMs), default: false };
-  });
-
-  options[closestIdx].default = true;
-  return options;
-}
 
 /**
  * Compute the current playback position from wall-clock timestamps.
@@ -87,4 +59,4 @@ function getComputedPosition(queue) {
   );
 }
 
-module.exports = { parseTimeToMs, formatMs, buildProgressBar, buildSeekOptions, getComputedPosition };
+module.exports = { parseTimeToMs, formatMs, buildProgressBar, getComputedPosition };

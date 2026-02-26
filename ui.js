@@ -5,6 +5,7 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  StringSelectMenuBuilder,
 } = require('discord.js');
 
 const { buildProgressBar, getComputedPosition } = require('./utils');
@@ -16,7 +17,6 @@ const BTN = {
   PAUSE:    'np_pause',
   FORWARD:  'np_forward',
   SKIP:     'np_skip',
-  STOP:     'np_stop',
 };
 
 /**
@@ -35,11 +35,11 @@ function buildNpEmbed(queue) {
     : progressBar;
 
   const embed = new EmbedBuilder()
-    .setAuthor({ name: queue.paused ? '⏸  Paused' : '▶  Now Playing' })
+    .setAuthor({ name: queue.paused ? 'Paused' : 'Now Playing' })
     .setTitle(info.title)
     .setURL(info.uri)
     .setDescription(description)
-    .setFooter({ text: `♫  ${queue.tracks.length} in queue` })
+    .setFooter({ text: `${queue.tracks.length} in queue${queue.current.requester ? `  •  點播：${queue.current.requester.displayName}` : ''}` })
     .setColor(queue.paused ? 0xffa500 : 0x1db954);
 
   if (info.sourceName === 'youtube' && info.identifier) {
@@ -57,6 +57,7 @@ function buildNpEmbed(queue) {
 function buildNpComponents(queue) {
   const isStream = queue.current?.info?.isStream ?? false;
 
+  // Row 1: seek/playback controls (max 5 buttons per ActionRow)
   const controlRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(BTN.RESTART)
@@ -83,7 +84,26 @@ function buildNpComponents(queue) {
       .setStyle(ButtonStyle.Danger),
   );
 
-  return [controlRow];
+  const components = [controlRow];
+
+  if (queue.tracks.length > 0) {
+    const options = queue.tracks.slice(0, 25).map((track, i) => ({
+      label: track.info.title.length > 100 ? track.info.title.slice(0, 97) + '...' : track.info.title,
+      description: track.requester ? `點播：${track.requester.displayName}` : undefined,
+      value: String(i),
+    }));
+
+    const queueMenu = new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId('np_queue_select')
+        .setPlaceholder(`Queue（${queue.tracks.length} 首）— 選歌直接跳播`)
+        .addOptions(options),
+    );
+
+    components.push(queueMenu);
+  }
+
+  return components;
 }
 
 module.exports = { buildNpEmbed, buildNpComponents };
