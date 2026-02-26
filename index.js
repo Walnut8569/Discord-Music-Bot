@@ -112,13 +112,20 @@ client.once('clientReady', async () => {
   const rest = new REST().setToken(DISCORD_TOKEN);
 
   // Guild commands update instantly; global commands take up to 1 hour.
-  const route = GUILD_ID
-    ? Routes.applicationGuildCommands(client.user.id, GUILD_ID)
-    : Routes.applicationCommands(client.user.id);
+  const guildIds = GUILD_ID
+    ? GUILD_ID.split(',').map(id => id.trim()).filter(Boolean)
+    : [];
 
   try {
-    await rest.put(route, { body: commandDefs });
-    console.log(`[Discord] Slash commands registered (${GUILD_ID ? `guild: ${GUILD_ID}` : 'global'}).`);
+    if (guildIds.length > 0) {
+      for (const gid of guildIds) {
+        await rest.put(Routes.applicationGuildCommands(client.user.id, gid), { body: commandDefs });
+        console.log(`[Discord] Slash commands registered (guild: ${gid}).`);
+      }
+    } else {
+      await rest.put(Routes.applicationCommands(client.user.id), { body: commandDefs });
+      console.log('[Discord] Slash commands registered (global).');
+    }
   } catch (err) {
     console.error('[Discord] Failed to register slash commands:', err);
   }

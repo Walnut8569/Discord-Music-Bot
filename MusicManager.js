@@ -279,9 +279,18 @@ class MusicManager {
     const queue = this.queues.get(guildId);
     if (!queue?.current) return;
 
+    // If an NP message already exists, edit it in place instead of sending a new one.
     if (queue.npMessage) {
-      queue.npMessage.delete().catch(() => {});
-      queue.npMessage = null;
+      try {
+        await queue.npMessage.edit({
+          embeds:     [buildNpEmbed(queue)],
+          components: buildNpComponents(queue),
+        });
+        return;
+      } catch {
+        // Message was deleted externally; fall through to send a fresh one.
+        queue.npMessage = null;
+      }
     }
 
     try {

@@ -33,6 +33,7 @@ npm start
 ```env
 DISCORD_TOKEN=
 GUILD_ID=              # 填了是伺服器指令（即時生效），不填是全域指令（最慢 1 小時）
+                       # 可用逗號分隔多個伺服器 ID，例如：123456789,987654321
 LAVALINK_HOST=localhost
 LAVALINK_PORT=2333
 LAVALINK_PASSWORD=youshallnotpass
