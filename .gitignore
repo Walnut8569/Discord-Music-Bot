@@ -9,6 +9,7 @@ node_modules/
 
 # Claude Code internal files
 .claude/
+CLAUDE.md
 
 # Logs
 logs/
