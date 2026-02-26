@@ -79,6 +79,22 @@ class MusicManager {
     }
   }
 
+  async handleClear(interaction) {
+    if (!await safeDefer(interaction)) return;
+
+    const guildId = interaction.guildId;
+    const queue   = this.queues.get(guildId);
+
+    if (!queue?.current) return interaction.editReply('Nothing is playing.');
+    if (interaction.member?.voice?.channelId !== queue.voiceChannelId) {
+      return interaction.editReply('Join the same voice channel first.');
+    }
+
+    const count = queue.tracks.length;
+    queue.tracks = [];
+    await interaction.editReply(count > 0 ? `Cleared **${count}** track(s) from the queue.` : 'The queue is already empty.');
+  }
+
   // ─── Button & Select Menu handlers ────────────────────────────────────────
 
   async handleButton(interaction) {

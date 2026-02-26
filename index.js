@@ -102,6 +102,10 @@ const commandDefs = [
         .setRequired(true),
     ),
 
+  new SlashCommandBuilder()
+    .setName('clear')
+    .setDescription('清空待播佇列（不中斷目前曲目）'),
+
 ].map((cmd) => cmd.toJSON());
 
 // ─── Register commands on ready ────────────────────────────────────────────
@@ -137,7 +141,8 @@ client.on('interactionCreate', async (interaction) => {
   try {
     if (interaction.isChatInputCommand()) {
       switch (interaction.commandName) {
-        case 'play': await client.music.handlePlay(interaction); break;
+        case 'play':  await client.music.handlePlay(interaction);  break;
+        case 'clear': await client.music.handleClear(interaction); break;
       }
     } else if (interaction.isButton()) {
       await client.music.handleButton(interaction);
