@@ -35,8 +35,8 @@ lavalink:
       lowPass: true
 
     # ── Audio quality ──────────────────────────────────────────────────────
-    bufferDurationMs: 400         # Increase to reduce underruns on slow networks (default: 400)
-    frameBufferDurationMs: 5000   # Frame buffer — raise if experiencing stuttering (default: 5000)
+    bufferDurationMs: 800         # Increase to reduce underruns on slow networks (default: 400)
+    frameBufferDurationMs: 10000  # Frame buffer — raise if experiencing stuttering (default: 5000)
     opusEncodingQuality: 10       # 0–10; 10 = best quality, higher CPU usage
     resamplingQuality: HIGH       # LOW | MEDIUM | HIGH
     trackStuckThresholdMs: 10000  # Mark track as stuck after 10 s of no audio frames

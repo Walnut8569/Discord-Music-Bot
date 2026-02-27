@@ -7,6 +7,7 @@ const { getComputedPosition } = require('./utils');
 
 const AUTO_LEAVE_MS      = 30_000;
 const PROGRESS_UPDATE_MS = 5_000;
+const MAX_NP_ERRORS      = 3;
 
 /**
  * Safely defer an ephemeral reply.
@@ -127,7 +128,6 @@ class MusicManager {
         await queue.player.setPaused(queue.paused);
         if (queue.paused) {
           queue.pausedPositionMs = getComputedPosition(queue);
-          queue.estimatedEndUnix = null;
           this._stopProgressUpdater(guildId);
         } else {
           this._updateTimestamps(queue, queue.pausedPositionMs ?? 0);
@@ -278,6 +278,8 @@ class MusicManager {
     if (!queue) return;
 
     queue.clearProgressInterval();
+    queue.npErrorCount = 0;
+    queue.npUpdating   = false;
     this._sendFreshNowPlaying(guildId);
 
     queue.progressInterval = setInterval(
@@ -302,6 +304,7 @@ class MusicManager {
           embeds:     [buildNpEmbed(queue)],
           components: buildNpComponents(queue),
         });
+        queue.npErrorCount = 0;
         return;
       } catch {
         // Message was deleted externally; fall through to send a fresh one.
@@ -317,7 +320,8 @@ class MusicManager {
         embeds:     [buildNpEmbed(queue)],
         components: buildNpComponents(queue),
       });
-      queue.npMessage = msg;
+      queue.npMessage    = msg;
+      queue.npErrorCount = 0;
     } catch (err) {
       console.warn(`[MusicManager] sendFreshNowPlaying (guild:${guildId}):`, err.message);
     }
@@ -325,25 +329,44 @@ class MusicManager {
 
   async _refreshNowPlaying(guildId) {
     const queue = this.queues.get(guildId);
-    if (!queue?.npMessage) return;
+    if (!queue?.current) return;
 
+    // Prevent concurrent requests from piling up during network outage
+    if (queue.npUpdating) return;
+
+    // If npMessage was lost (error / deleted), try to re-send (network may have recovered)
+    if (!queue.npMessage) {
+      await this._sendFreshNowPlaying(guildId);
+      return;
+    }
+
+    queue.npUpdating = true;
     try {
       await queue.npMessage.edit({
         embeds:     [buildNpEmbed(queue)],
         components: buildNpComponents(queue),
       });
+      queue.npErrorCount = 0;
     } catch (err) {
       queue.npMessage = null;
-      console.warn(`[MusicManager] refreshNowPlaying (guild:${guildId}):`, err.message);
+      queue.npErrorCount += 1;
+
+      if (queue.npErrorCount >= MAX_NP_ERRORS) {
+        // Discord is unreachable — stop hammering the API until next track
+        this._stopProgressUpdater(guildId);
+        console.warn(`[MusicManager] refreshNowPlaying (guild:${guildId}): pausing updates after ${MAX_NP_ERRORS} consecutive errors — ${err.message}`);
+      } else {
+        console.warn(`[MusicManager] refreshNowPlaying (guild:${guildId}):`, err.message);
+      }
+    } finally {
+      queue.npUpdating = false;
     }
   }
 
   // ─── Timestamp helpers ─────────────────────────────────────────────────────
 
   _updateTimestamps(queue, positionMs) {
-    const duration = queue.current?.info?.length ?? 0;
     queue.effectiveStartUnix = Math.floor((Date.now() - positionMs) / 1000);
-    queue.estimatedEndUnix   = queue.effectiveStartUnix + Math.floor(duration / 1000);
   }
 
   // ─── Misc helpers ──────────────────────────────────────────────────────────

@@ -18,8 +18,6 @@ class GuildQueue {
     this.paused  = false;
     /** Wall-clock Unix second when playback position was 0 */
     this.effectiveStartUnix = null;
-    /** Wall-clock Unix second when the current track will end */
-    this.estimatedEndUnix   = null;
     /** Playback position (ms) recorded at the moment of pause */
     this.pausedPositionMs   = null;
     /** @type {import('discord.js').Message|null} */
@@ -28,6 +26,10 @@ class GuildQueue {
     this.progressInterval = null;
     /** @type {ReturnType<typeof setTimeout>|null} */
     this.leaveTimer       = null;
+    /** Prevent concurrent NP update requests from piling up */
+    this.npUpdating       = false;
+    /** Consecutive NP update failures; progress updater stops after MAX_NP_ERRORS */
+    this.npErrorCount     = 0;
   }
 
   clearLeaveTimer() {

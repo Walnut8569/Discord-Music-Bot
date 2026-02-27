@@ -3,20 +3,6 @@
 const PROGRESS_BAR_LENGTH = 19;
 
 /**
- * Parse a time string to milliseconds.
- * Accepts plain seconds ("90") or mm:ss ("1:30").
- * @param {string} str
- * @returns {number|null}
- */
-function parseTimeToMs(str) {
-  str = str.trim();
-  if (/^\d+$/.test(str)) return parseInt(str, 10) * 1000;
-  const m = str.match(/^(\d+):(\d{2})$/);
-  if (m) return (parseInt(m[1], 10) * 60 + parseInt(m[2], 10)) * 1000;
-  return null;
-}
-
-/**
  * Format milliseconds to m:ss string.
  * @param {number} ms
  * @returns {string}
@@ -43,7 +29,6 @@ function buildProgressBar(position, duration, length = PROGRESS_BAR_LENGTH) {
   return `\`${formatMs(position)}\` ${bar} \`${formatMs(duration)}\``;
 }
 
-
 /**
  * Compute the current playback position from wall-clock timestamps.
  * More accurate than queue.player.position (which only updates every 5 s).
@@ -59,4 +44,4 @@ function getComputedPosition(queue) {
   );
 }
 
-module.exports = { parseTimeToMs, formatMs, buildProgressBar, getComputedPosition };
+module.exports = { formatMs, buildProgressBar, getComputedPosition };
