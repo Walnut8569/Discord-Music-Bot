@@ -41,6 +41,8 @@ class MusicManager {
     this.client = client;
     /** @type {Map<string, GuildQueue>} */
     this.queues = new Map();
+    /** @type {Map<string, Promise<GuildQueue>>} */
+    this._pending = new Map();
   }
 
   // ─── Slash command handlers ────────────────────────────────────────────────
@@ -75,8 +77,8 @@ class MusicManager {
 
       await interaction.editReply(replyMsg);
     } catch (err) {
-      console.error(`[MusicManager] handlePlay (guild:${guildId}):`, err);
-      await interaction.editReply('Playback error. Please try again.').catch(() => {});
+      if (!err.userFacing) console.error(`[MusicManager] handlePlay (guild:${guildId}):`, err);
+      await interaction.editReply(err.userMessage ?? 'Playback error. Please try again.').catch(() => {});
     }
   }
 
@@ -111,41 +113,46 @@ class MusicManager {
 
     await interaction.deferUpdate();
 
-    switch (interaction.customId) {
-      case BTN.RESTART: {
-        await queue.player.seekTo(0);
-        this._updateTimestamps(queue, 0);
-        break;
-      }
-      case BTN.BACK: {
-        const newPos = Math.max(0, getComputedPosition(queue) - 10_000);
-        await queue.player.seekTo(newPos);
-        this._updateTimestamps(queue, newPos);
-        break;
-      }
-      case BTN.PAUSE: {
-        queue.paused = !queue.paused;
-        await queue.player.setPaused(queue.paused);
-        if (queue.paused) {
-          queue.pausedPositionMs = getComputedPosition(queue);
-          this._stopProgressUpdater(guildId);
-        } else {
-          this._updateTimestamps(queue, queue.pausedPositionMs ?? 0);
-          queue.pausedPositionMs = null;
-          this._startProgressUpdater(guildId);
+    try {
+      switch (interaction.customId) {
+        case BTN.RESTART: {
+          await queue.player.seekTo(0);
+          this._updateTimestamps(queue, 0);
+          break;
         }
-        break;
+        case BTN.BACK: {
+          const newPos = Math.max(0, getComputedPosition(queue) - 10_000);
+          await queue.player.seekTo(newPos);
+          this._updateTimestamps(queue, newPos);
+          break;
+        }
+        case BTN.PAUSE: {
+          queue.paused = !queue.paused;
+          await queue.player.setPaused(queue.paused);
+          if (queue.paused) {
+            queue.pausedPositionMs = getComputedPosition(queue);
+            this._stopProgressUpdater(guildId);
+          } else {
+            this._updateTimestamps(queue, queue.pausedPositionMs ?? 0);
+            queue.pausedPositionMs = null;
+            this._startProgressUpdater(guildId);
+          }
+          break;
+        }
+        case BTN.FORWARD: {
+          const newPos = Math.min(queue.current.info.length, getComputedPosition(queue) + 10_000);
+          await queue.player.seekTo(newPos);
+          this._updateTimestamps(queue, newPos);
+          break;
+        }
+        case BTN.SKIP:
+          await queue.player.stopTrack();
+          break;
       }
-      case BTN.FORWARD: {
-        const newPos = Math.min(queue.current.info.length, getComputedPosition(queue) + 10_000);
-        await queue.player.seekTo(newPos);
-        this._updateTimestamps(queue, newPos);
-        break;
-      }
-      case BTN.SKIP:
-        await queue.player.stopTrack();
-        break;
-
+    } catch (err) {
+      console.error(`[MusicManager] handleButton (guild:${guildId}):`, err);
+      interaction.followUp({ content: 'Action failed. Please try again.', flags: MessageFlags.Ephemeral }).catch(() => {});
+      return;
     }
 
     await this._refreshNowPlaying(guildId);
@@ -193,15 +200,29 @@ class MusicManager {
     const existing = this.queues.get(guildId);
     if (existing) return existing;
 
-    const player = await this.client.shoukaku.joinVoiceChannel({
-      guildId, channelId: voiceChannel.id, shardId, deaf: true,
-    });
+    if (this._pending.has(guildId)) return this._pending.get(guildId);
 
-    const queue = new GuildQueue(voiceChannel.id, textChannelId);
-    queue.player = player;
-    this.queues.set(guildId, queue);
-    this._attachPlayerEvents(guildId, player);
-    return queue;
+    const promise = (async () => {
+      if (this.client.shoukaku.nodes.size === 0 ||
+          ![...this.client.shoukaku.nodes.values()].some(n => n.state === 1 /* CONNECTED */)) {
+        throw Object.assign(new Error('No Lavalink nodes available'), { userFacing: true, userMessage: 'Music service is not ready yet. Please wait a moment and try again.' });
+      }
+      const player = await this.client.shoukaku.joinVoiceChannel({
+        guildId, channelId: voiceChannel.id, shardId, deaf: true,
+      });
+      const queue = new GuildQueue(voiceChannel.id, textChannelId);
+      queue.player = player;
+      this.queues.set(guildId, queue);
+      this._attachPlayerEvents(guildId, player);
+      return queue;
+    })();
+
+    this._pending.set(guildId, promise);
+    try {
+      return await promise;
+    } finally {
+      this._pending.delete(guildId);
+    }
   }
 
   _attachPlayerEvents(guildId, player) {
@@ -215,59 +236,76 @@ class MusicManager {
       this._startProgressUpdater(guildId);
     });
 
-    player.on('end', (data) => {
+    player.on('end', async (data) => {
       if (data?.reason === 'replaced') return;
       this._stopProgressUpdater(guildId);
-      this._playNext(guildId);
+      try { await this._playNext(guildId); } catch (err) {
+        console.error(`[MusicManager] end._playNext (guild:${guildId}):`, err);
+      }
     });
 
-    player.on('exception', (data) => {
+    player.on('exception', async (data) => {
       console.error(`[MusicManager] exception (guild:${guildId}):`, data);
       this._stopProgressUpdater(guildId);
       this._sendToText(guildId, `Playback error: ${data?.exception?.message ?? 'unknown'}. Skipping.`);
-      this._playNext(guildId);
+      try { await this._playNext(guildId); } catch (err) {
+        console.error(`[MusicManager] exception._playNext (guild:${guildId}):`, err);
+      }
     });
 
-    player.on('stuck', () => {
+    player.on('stuck', async () => {
       this._stopProgressUpdater(guildId);
       this._sendToText(guildId, 'Playback stuck. Skipping.');
-      this._playNext(guildId);
+      try { await this._playNext(guildId); } catch (err) {
+        console.error(`[MusicManager] stuck._playNext (guild:${guildId}):`, err);
+      }
     });
 
-    player.on('closed', () => {
+    player.on('closed', async () => {
       this._stopProgressUpdater(guildId);
-      this._destroyQueue(guildId);
+      try { await this._destroyQueue(guildId); } catch (err) {
+        console.error(`[MusicManager] closed._destroyQueue (guild:${guildId}):`, err);
+      }
     });
   }
 
   async _playNext(guildId) {
     const queue = this.queues.get(guildId);
-    if (!queue) return;
-
-    if (queue.tracks.length === 0) {
-      queue.playing = false;
-      queue.current = null;
-      this._stopProgressUpdater(guildId);
-      if (queue.npMessage) {
-        queue.npMessage.delete().catch(() => {});
-        queue.npMessage = null;
-      }
-      queue.leaveTimer = setTimeout(() => this._destroyQueue(guildId), AUTO_LEAVE_MS);
-      return;
-    }
-
-    queue.clearLeaveTimer();
-    const track  = queue.tracks.shift();
-    queue.current = track;
-    queue.playing = true;
+    if (!queue || queue.advancing) return;
+    queue.advancing = true;
 
     try {
-      await queue.player.playTrack({ track: { encoded: track.encoded } });
-    } catch (err) {
-      console.error(`[MusicManager] playTrack failed (guild:${guildId}):`, err);
-      this._sendToText(guildId, 'Failed to play track. Skipping.');
-      queue.current = null;
-      this._playNext(guildId);
+      while (true) {
+        if (queue.tracks.length === 0) {
+          queue.playing = false;
+          queue.current = null;
+          this._stopProgressUpdater(guildId);
+          if (queue.npMessage) {
+            queue.npMessage.delete().catch(() => {});
+            queue.npMessage = null;
+          }
+          queue.leaveTimer = setTimeout(() => this._destroyQueue(guildId), AUTO_LEAVE_MS);
+          return;
+        }
+
+        queue.clearLeaveTimer();
+        const track = queue.tracks.shift();
+        queue.current = track;
+        queue.playing = true;
+
+        try {
+          await queue.player.playTrack({ track: { encoded: track.encoded } });
+          return; // success — wait for 'start' event
+        } catch (err) {
+          console.error(`[MusicManager] playTrack failed (guild:${guildId}):`, err);
+          this._sendToText(guildId, 'Failed to play track. Skipping.');
+          queue.current = null;
+          queue.playing = false;
+          // loop continues to next track
+        }
+      }
+    } finally {
+      queue.advancing = false;
     }
   }
 
@@ -382,6 +420,8 @@ class MusicManager {
       queue.npMessage = null;
     }
     this.queues.delete(guildId);
+
+    if (queue.player) queue.player.removeAllListeners();
 
     try {
       await this.client.shoukaku.leaveVoiceChannel(guildId);

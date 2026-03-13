@@ -157,6 +157,12 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
+// ─── Guild delete cleanup ──────────────────────────────────────────────────
+
+client.on('guildDelete', (guild) => {
+  client.music._destroyQueue(guild.id).catch(console.error);
+});
+
 // ─── Global error guards (prevent crashes from unhandled rejections) ───────
 
 process.on('unhandledRejection', (reason) => {
