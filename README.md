@@ -2,14 +2,34 @@
 
 discord.js v14 + Shoukaku + Lavalink 寫的音樂 bot。
 
-## 使用
+## 指令
 
 | 指令 | 說明 |
 |---|---|
 | `/play <URL 或關鍵字>` | 播放 YouTube 音樂，支援單曲、播放清單、關鍵字搜尋 |
 | `/clear` | 清空待播佇列（不中斷目前曲目） |
+| `/playfav` | 將你的最愛歌單全部加入佇列 |
 
-播放中會有一則 Now Playing 訊息，上面有進度條和控制按鈕（重播、後退 10 秒、暫停、前進 10 秒、跳過）。有待播清單的話會附上選單可以直接跳播。隊列空了之後 30 秒自動離開。
+## Now Playing
+
+播放中會出現一則 Now Playing 訊息，包含進度條、封面圖和控制按鈕：
+
+| 按鈕 | 功能 |
+|---|---|
+| `♡` | 將目前歌曲加入你的最愛歌單 |
+| `⏮` | 跳回歌曲開頭 |
+| `⏸` / `▶` | 暫停 / 繼續 |
+| `⏭` | 跳過目前曲目 |
+| `↺` / `↺¹` / `↺∞` | 循環模式：關閉 / 單曲循環 / 全部循環 |
+
+有待播清單的話會附上選單，可以直接跳播任意一首。佇列空了之後 30 秒自動離開。
+
+## 最愛歌單
+
+每位用戶都有自己的最愛歌單，儲存在 `favorites.json`。
+
+- 播放中按 `♡` 將目前歌曲加入歌單（重複加會提示已存在）
+- `/playfav` 將整個歌單依序加入目前佇列
 
 ## 跑起來
 
@@ -39,6 +59,7 @@ LAVALINK_HOST=localhost
 LAVALINK_PORT=2333
 LAVALINK_PASSWORD=youshallnotpass
 LAVALINK_SECURE=false
+GEMINI_API_KEY=        # 選填，填了可以 @ bot 問問題（Gemini 2.0 Flash）
 ```
 
 密碼要跟 `application.yml` 裡的 `password` 一致。
@@ -66,15 +87,17 @@ youtube-source 插件需手動下載放進 `lavalink/plugins/`：
 https://github.com/lavalink-devtools/youtube-source/releases
 ```
 
-下載 `youtube-plugin-x.x.x.jar` 放入後重啟 Lavalink 即可。插件版本在 `application.yml` 的 `lavalink.plugins` 區段設定，目前使用 `1.17.0`。
+下載 `youtube-plugin-x.x.x.jar` 放入後重啟 Lavalink 即可。
 
 ## 檔案結構
 
 ```
 index.js          # 入口，Discord client + Shoukaku 初始化、指令路由
-MusicManager.js   # 播放邏輯、隊列管理
+MusicManager.js   # 播放邏輯、隊列管理、最愛功能
 GuildQueue.js     # 每個伺服器的播放狀態
 ui.js             # Now Playing embed 和按鈕
 utils.js          # 進度條、時間格式化
+favorites.js      # 最愛歌單讀寫
+favorites.json    # 最愛歌單資料（自動產生，不納入版控）
 application.yml   # Lavalink 設定
 ```

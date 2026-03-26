@@ -12,11 +12,11 @@ const { buildProgressBar, getComputedPosition } = require('./utils');
 
 // Button custom ID constants (must match MusicManager.js BTN object)
 const BTN = {
-  RESTART:  'np_restart',
-  BACK:     'np_back',
-  PAUSE:    'np_pause',
-  FORWARD:  'np_forward',
-  SKIP:     'np_skip',
+  FAV:     'np_fav',
+  RESTART: 'np_restart',
+  PAUSE:   'np_pause',
+  SKIP:    'np_skip',
+  LOOP:    'np_loop',
 };
 
 /**
@@ -39,7 +39,7 @@ function buildNpEmbed(queue) {
     .setTitle(info.title)
     .setURL(info.uri)
     .setDescription(description)
-    .setFooter({ text: `${queue.tracks.length} in queue${queue.current.requester ? `  •  點播：${queue.current.requester.displayName}` : ''}` })
+    .setFooter({ text: `${queue.tracks.length} in queue${{ OFF: '', TRACK: '  •  🔁 單曲', QUEUE: '  •  🔁 全部' }[queue.loopMode] ?? ''}${queue.current.requester ? `  •  點播：${queue.current.requester.displayName}` : ''}` })
     .setColor(queue.paused ? 0xffa500 : 0x1db954);
 
   if (info.sourceName === 'youtube' && info.identifier) {
@@ -57,16 +57,18 @@ function buildNpEmbed(queue) {
 function buildNpComponents(queue) {
   const isStream = queue.current?.info?.isStream ?? false;
 
-  // Row 1: seek/playback controls (max 5 buttons per ActionRow)
+  const loopStyles = { OFF: ButtonStyle.Secondary, TRACK: ButtonStyle.Primary, QUEUE: ButtonStyle.Success };
+  const loopLabels = { OFF: '↺', TRACK: '↺¹', QUEUE: '↺∞' };
+
+  // ❤️ ⏮ ⏸/▶ ⏭ 🔁  (max 5 buttons per ActionRow)
   const controlRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(BTN.FAV)
+      .setLabel('♡')
+      .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId(BTN.RESTART)
       .setLabel('⏮')
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(isStream),
-    new ButtonBuilder()
-      .setCustomId(BTN.BACK)
-      .setLabel('↺')
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(isStream),
     new ButtonBuilder()
@@ -74,14 +76,13 @@ function buildNpComponents(queue) {
       .setLabel(queue.paused ? '▶' : '⏸')
       .setStyle(queue.paused ? ButtonStyle.Success : ButtonStyle.Primary),
     new ButtonBuilder()
-      .setCustomId(BTN.FORWARD)
-      .setLabel('↻')
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(isStream),
-    new ButtonBuilder()
       .setCustomId(BTN.SKIP)
       .setLabel('⏭')
-      .setStyle(ButtonStyle.Danger),
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(BTN.LOOP)
+      .setLabel(loopLabels[queue.loopMode] ?? '🔁')
+      .setStyle(loopStyles[queue.loopMode] ?? ButtonStyle.Secondary),
   );
 
   const components = [controlRow];

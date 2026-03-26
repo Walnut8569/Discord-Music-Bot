@@ -11,6 +11,7 @@ const {
   SlashCommandBuilder,
 } = require('discord.js');
 const { Shoukaku, Connectors } = require('shoukaku');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const MusicManager = require('./MusicManager');
 
 // ─── Validate environment ──────────────────────────────────────────────────
@@ -22,6 +23,7 @@ const {
   LAVALINK_PORT = '2333',
   LAVALINK_PASSWORD = 'youshallnotpass',
   LAVALINK_SECURE = 'false',
+  GEMINI_API_KEY,
 } = process.env;
 
 if (!DISCORD_TOKEN) {
@@ -35,8 +37,15 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
   ],
 });
+
+// ─── Gemini AI ─────────────────────────────────────────────────────────────
+
+const genAI = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
+const geminiModel = genAI ? genAI.getGenerativeModel({ model: 'gemini-2.0-flash' }) : null;
 
 // ─── Shoukaku (Lavalink wrapper) ───────────────────────────────────────────
 
@@ -104,7 +113,15 @@ const commandDefs = [
 
   new SlashCommandBuilder()
     .setName('clear')
-    .setDescription('清空待播佇列（不中斷目前曲目）'),
+    .setDescription('清空待播佇列'),
+
+  new SlashCommandBuilder()
+    .setName('lucifer31415926536')
+    .setDescription('100%juice is gay'),
+
+  new SlashCommandBuilder()
+    .setName('playfav')
+    .setDescription('播放最愛歌曲'),
 
 ].map((cmd) => cmd.toJSON());
 
@@ -141,8 +158,10 @@ client.on('interactionCreate', async (interaction) => {
   try {
     if (interaction.isChatInputCommand()) {
       switch (interaction.commandName) {
-        case 'play':  await client.music.handlePlay(interaction);  break;
-        case 'clear': await client.music.handleClear(interaction); break;
+        case 'play':               await client.music.handlePlay(interaction);    break;
+        case 'clear':              await client.music.handleClear(interaction);   break;
+        case 'lucifer31415926536': await client.music.handleLucifer(interaction);  break;
+        case 'playfav':            await client.music.handlePlayFav(interaction); break;
       }
     } else if (interaction.isButton()) {
       await client.music.handleButton(interaction);
@@ -154,6 +173,48 @@ client.on('interactionCreate', async (interaction) => {
     // 40060: interaction already acknowledged by a concurrent handler
     if (err.code === 10062 || err.code === 40060) return;
     console.error('[Discord] Interaction error:', err);
+  }
+});
+
+// ─── Mention → Gemini reply ────────────────────────────────────────────────
+
+client.on('messageCreate', async (message) => {
+  // Ignore bots and messages that don't mention this bot
+  if (message.author.bot) return;
+  if (!message.mentions.has(client.user)) return;
+  if (!geminiModel) {
+    await message.reply('GEMINI_API_KEY 未設定，無法使用 AI 功能。');
+    return;
+  }
+
+  // Strip the mention from the message content
+  const prompt = message.content
+    .replace(/<@!?\d+>/g, '')
+    .trim();
+
+  if (!prompt) {
+    await message.reply('請在 @ 我之後輸入你想問的問題！');
+    return;
+  }
+
+  try {
+    await message.channel.sendTyping();
+    const result = await geminiModel.generateContent(prompt);
+    const text = result.response.text();
+
+    // Discord messages are limited to 2000 characters
+    if (text.length <= 2000) {
+      await message.reply(text);
+    } else {
+      // Split into chunks
+      const chunks = text.match(/[\s\S]{1,2000}/g);
+      for (const chunk of chunks) {
+        await message.channel.send(chunk);
+      }
+    }
+  } catch (err) {
+    console.error('[Gemini] Error:', err);
+    await message.reply('AI 回覆時發生錯誤，請稍後再試。');
   }
 });
 

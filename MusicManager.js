@@ -4,6 +4,7 @@ const { MessageFlags } = require('discord.js');
 const GuildQueue = require('./GuildQueue');
 const { buildNpEmbed, buildNpComponents } = require('./ui');
 const { getComputedPosition } = require('./utils');
+const { getFavorites, addFavorite } = require('./favorites');
 
 const AUTO_LEAVE_MS      = 30_000;
 const PROGRESS_UPDATE_MS = 5_000;
@@ -28,11 +29,11 @@ async function safeDefer(interaction) {
 
 // Button custom ID constants
 const BTN = {
+  FAV:     'np_fav',
   RESTART: 'np_restart',
-  BACK:    'np_back',
   PAUSE:   'np_pause',
-  FORWARD: 'np_forward',
   SKIP:    'np_skip',
+  LOOP:    'np_loop',
 };
 
 class MusicManager {
@@ -47,13 +48,17 @@ class MusicManager {
 
   // ─── Slash command handlers ────────────────────────────────────────────────
 
-  async handlePlay(interaction) {
+  async handleLucifer(interaction) {
+    return this.handlePlay(interaction, 'https://youtu.be/EPO7f7hMnOk');
+  }
+
+  async handlePlay(interaction, fixedUrl) {
     if (!await safeDefer(interaction)) return;
 
     const voiceChannel = interaction.member?.voice?.channel;
     if (!voiceChannel) return interaction.editReply('Join a voice channel first.');
 
-    const query   = interaction.options.getString('url', true);
+    const query   = fixedUrl ?? interaction.options.getString('url', true);
     const guildId = interaction.guildId;
 
     try {
@@ -101,6 +106,11 @@ class MusicManager {
   // ─── Button & Select Menu handlers ────────────────────────────────────────
 
   async handleButton(interaction) {
+    // ❤️ 最愛：不需要在語音頻道，回覆 ephemeral 而非更新 NP 訊息
+    if (interaction.customId === BTN.FAV) {
+      return this._handleFav(interaction);
+    }
+
     const guildId = interaction.guildId;
     const queue   = this.queues.get(guildId);
 
@@ -120,12 +130,6 @@ class MusicManager {
           this._updateTimestamps(queue, 0);
           break;
         }
-        case BTN.BACK: {
-          const newPos = Math.max(0, getComputedPosition(queue) - 10_000);
-          await queue.player.seekTo(newPos);
-          this._updateTimestamps(queue, newPos);
-          break;
-        }
         case BTN.PAUSE: {
           queue.paused = !queue.paused;
           await queue.player.setPaused(queue.paused);
@@ -139,15 +143,15 @@ class MusicManager {
           }
           break;
         }
-        case BTN.FORWARD: {
-          const newPos = Math.min(queue.current.info.length, getComputedPosition(queue) + 10_000);
-          await queue.player.seekTo(newPos);
-          this._updateTimestamps(queue, newPos);
-          break;
-        }
         case BTN.SKIP:
+          queue.skipping = true;
           await queue.player.stopTrack();
           break;
+        case BTN.LOOP: {
+          const modes = ['OFF', 'TRACK', 'QUEUE'];
+          queue.loopMode = modes[(modes.indexOf(queue.loopMode) + 1) % 3];
+          break;
+        }
       }
     } catch (err) {
       console.error(`[MusicManager] handleButton (guild:${guildId}):`, err);
@@ -179,7 +183,58 @@ class MusicManager {
     // Move selected track to front of queue, then skip current
     const [track] = queue.tracks.splice(idx, 1);
     queue.tracks.unshift(track);
+    queue.skipping = true;
     await queue.player.stopTrack();
+  }
+
+  async handlePlayFav(interaction) {
+    if (!await safeDefer(interaction)) return;
+
+    const favs = getFavorites(interaction.user.id);
+    if (!favs.length) return interaction.editReply('你的最愛歌單是空的，播放音樂時按 ♡ 新增。');
+
+    const voiceChannel = interaction.member?.voice?.channel;
+    if (!voiceChannel) return interaction.editReply('請先加入語音頻道。');
+
+    const guildId = interaction.guildId;
+    try {
+      const queue = await this._getOrCreateQueue(guildId, voiceChannel, interaction.channelId, interaction.guild.shardId ?? 0);
+
+      let added = 0;
+      for (const fav of favs) {
+        try {
+          const result = await queue.player.node.rest.resolve(fav.uri);
+          const { tracks } = this._extractTracks(result);
+          if (tracks.length) {
+            tracks[0].requester = interaction.user;
+            queue.tracks.push(tracks[0]);
+            added++;
+          }
+        } catch { /* 跳過無法解析的歌曲 */ }
+      }
+
+      if (!added) return interaction.editReply('無法播放最愛歌單中的任何歌曲。');
+      if (!queue.playing) await this._playNext(guildId);
+
+      await interaction.editReply(`♡ 已將 **${added}** 首最愛歌曲加入佇列！`);
+    } catch (err) {
+      if (!err.userFacing) console.error(`[MusicManager] handlePlayFav (guild:${guildId}):`, err);
+      await interaction.editReply(err.userMessage ?? '播放失敗，請稍後再試。').catch(() => {});
+    }
+  }
+
+  async _handleFav(interaction) {
+    const queue = this.queues.get(interaction.guildId);
+    if (!queue?.current) {
+      return interaction.reply({ content: '目前沒有播放中的音樂。', flags: MessageFlags.Ephemeral });
+    }
+    const added = addFavorite(interaction.user.id, queue.current.info);
+    await interaction.reply({
+      content: added
+        ? `♡ 已將 **${queue.current.info.title}** 加入最愛歌單！`
+        : `**${queue.current.info.title}** 已在你的最愛歌單中。`,
+      flags: MessageFlags.Ephemeral,
+    });
   }
 
   // ─── Lavalink node cleanup ─────────────────────────────────────────────────
@@ -248,6 +303,8 @@ class MusicManager {
       console.error(`[MusicManager] exception (guild:${guildId}):`, data);
       this._stopProgressUpdater(guildId);
       this._sendToText(guildId, `Playback error: ${data?.exception?.message ?? 'unknown'}. Skipping.`);
+      const q = this.queues.get(guildId);
+      if (q) q.skipping = true;
       try { await this._playNext(guildId); } catch (err) {
         console.error(`[MusicManager] exception._playNext (guild:${guildId}):`, err);
       }
@@ -256,6 +313,8 @@ class MusicManager {
     player.on('stuck', async () => {
       this._stopProgressUpdater(guildId);
       this._sendToText(guildId, 'Playback stuck. Skipping.');
+      const q = this.queues.get(guildId);
+      if (q) q.skipping = true;
       try { await this._playNext(guildId); } catch (err) {
         console.error(`[MusicManager] stuck._playNext (guild:${guildId}):`, err);
       }
@@ -276,6 +335,17 @@ class MusicManager {
 
     try {
       while (true) {
+        // Loop: re-insert the just-finished track unless it was deliberately skipped
+        const wasSkipping = queue.skipping;
+        queue.skipping = false;
+        if (!wasSkipping && queue.current && queue.loopMode !== 'OFF') {
+          if (queue.loopMode === 'TRACK') {
+            queue.tracks.unshift(queue.current);
+          } else {
+            queue.tracks.push(queue.current);
+          }
+        }
+
         if (queue.tracks.length === 0) {
           queue.playing = false;
           queue.current = null;

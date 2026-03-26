@@ -30,6 +30,10 @@ class GuildQueue {
     this.npUpdating       = false;
     /** Consecutive NP update failures; progress updater stops after MAX_NP_ERRORS */
     this.npErrorCount     = 0;
+    /** Loop mode: 'OFF' | 'TRACK' | 'QUEUE' */
+    this.loopMode = 'OFF';
+    /** True when the current track was deliberately skipped (suppresses loop re-insert) */
+    this.skipping = false;
   }
 
   clearLeaveTimer() {
