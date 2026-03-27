@@ -28,3 +28,10 @@ Thumbs.db
 
 # User data
 favorites.json
+
+# PM2 設定（含機器路徑，各環境不同）
+ecosystem.config.js
+
+# 橘雪莉圖片與 AI 分析快取（本地資源，不納入版控）
+images/orange/
+images/orange_descriptions.json

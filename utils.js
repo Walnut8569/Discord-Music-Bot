@@ -1,9 +1,11 @@
 'use strict';
 
+// 進度條的字元總長度（不含 ● 符號）
 const PROGRESS_BAR_LENGTH = 19;
 
 /**
- * Format milliseconds to m:ss string.
+ * 將毫秒數格式化為 m:ss 字串。
+ * 例：90000 → "1:30"
  * @param {number} ms
  * @returns {string}
  */
@@ -15,29 +17,33 @@ function formatMs(ms) {
 }
 
 /**
- * Build a music-player-style progress bar.
- * Example: `1:23` ━━━━━━━━━●━━━━━━━━━ `5:54`
- * @param {number} position  Current position in ms
- * @param {number} duration  Total duration in ms
- * @param {number} [length]  Number of ━ chars (excluding ●)
+ * 產生音樂播放器風格的進度條字串。
+ * 範例輸出：`1:23` ━━━━━━━━━●━━━━━━━━━ `5:54`
+ * @param {number} position  目前播放位置（毫秒）
+ * @param {number} duration  曲目總長度（毫秒）
+ * @param {number} [length]  ━ 字元的總數（不含 ●，預設 19）
  * @returns {string}
  */
 function buildProgressBar(position, duration, length = PROGRESS_BAR_LENGTH) {
+  // 計算進度比例，最大為 1（避免超過結尾）
   const ratio  = duration > 0 ? Math.min(position / duration, 1) : 0;
   const filled = Math.round(ratio * length);
+  // 前段已播 ━，指示點 ●，後段未播 ━
   const bar    = '━'.repeat(filled) + '●' + '━'.repeat(length - filled);
   return `\`${formatMs(position)}\` ${bar} \`${formatMs(duration)}\``;
 }
 
 /**
- * Compute the current playback position from wall-clock timestamps.
- * More accurate than queue.player.position (which only updates every 5 s).
+ * 根據 wall-clock 時間計算當前播放位置，精度高於 Shoukaku 的 player.position
+ * （後者每 5 秒才更新一次）。
  * @param {import('./GuildQueue')} queue
- * @returns {number} Position in ms
+ * @returns {number} 目前播放位置（毫秒）
  */
 function getComputedPosition(queue) {
   if (!queue.effectiveStartUnix) return 0;
+  // 暫停中：直接回傳暫停時記錄的位置
   if (queue.paused) return queue.pausedPositionMs ?? 0;
+  // 播放中：用現在時間減去「位置為 0 時的 wall-clock」
   return Math.min(
     Date.now() - queue.effectiveStartUnix * 1000,
     queue.current?.info?.length ?? 0,
